@@ -1,7 +1,14 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { X, Calendar, DollarSign, CheckCircle2, ChevronRight, FileText, LayoutList } from 'lucide-react';
+import { X, Calendar, DollarSign, CheckCircle2, LayoutList, Loader2, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import emailjs from '@emailjs/browser';
 import { Booking } from '../types';
+
+// ─── EmailJS Configuration ───────────────────────────────────────────────────
+const EMAILJS_SERVICE_ID  = 'service_825eq9g';
+const EMAILJS_TEMPLATE_ID = 'template_285d9ao';
+const EMAILJS_PUBLIC_KEY  = 'Ab8houXFVsCa9rzn5';
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface BookingFormModalProps {
   isOpen: boolean;
@@ -11,78 +18,128 @@ interface BookingFormModalProps {
   onNewBookingAdded: () => void;
 }
 
-export default function BookingFormModal({ isOpen, onClose, initialServices, initialCost, onNewBookingAdded }: BookingFormModalProps) {
+export default function BookingFormModal({
+  isOpen,
+  onClose,
+  initialServices,
+  initialCost,
+  onNewBookingAdded,
+}: BookingFormModalProps) {
   const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    address: "",
-    city: "Colorado Springs" as any,
-    date: "",
-    notes: ""
+    name: '',
+    email: '',
+    phone: '',
+    address: '',
+    city: 'Colorado Springs' as string,
+    date: '',
+    notes: '',
   });
 
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
-  const [estimatedCost, setEstimatedCost] = useState<number>(0);
-  const [isSuccess, setIsSuccess] = useState<boolean>(false);
-  const [createdBooking, setCreatedBooking] = useState<Booking | null>(null);
+  const [estimatedCost, setEstimatedCost]       = useState<number>(0);
+  const [isSuccess, setIsSuccess]               = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting]         = useState<boolean>(false);
+  const [submitError, setSubmitError]           = useState<string | null>(null);
+  const [createdBooking, setCreatedBooking]     = useState<Booking | null>(null);
 
-  // Synchronize initial selections from main App pages
+  // Sync initial service selections passed in from the main App
   useEffect(() => {
     if (isOpen) {
-      setSelectedServices(initialServices.length > 0 ? initialServices : ["Wildfire Fuel Mitigation & Stacking"]);
+      setSelectedServices(
+        initialServices.length > 0
+          ? initialServices
+          : ['Wildfire Fuel Mitigation & Stacking']
+      );
       setEstimatedCost(initialCost > 0 ? initialCost : 199);
       setIsSuccess(false);
       setCreatedBooking(null);
+      setSubmitError(null);
     }
   }, [isOpen, initialServices, initialCost]);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    
-    // Create new robust booking record
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    // Build the local booking record
     const newBooking: Booking = {
-      id: "SRV-" + Math.floor(100000 + Math.random() * 900000),
+      id: 'SRV-' + Math.floor(100000 + Math.random() * 900000),
       name: formData.name,
       email: formData.email,
       phone: formData.phone,
       address: formData.address,
       city: formData.city,
-      date: formData.date || new Date(Date.now() + 86450000 * 3).toISOString().split('T')[0], // default 3 days out
+      date:
+        formData.date ||
+        new Date(Date.now() + 86450000 * 3).toISOString().split('T')[0],
       services: selectedServices,
       notes: formData.notes,
       status: 'Pending Review',
-      estimatedCost: estimatedCost
+      estimatedCost: estimatedCost,
     };
 
-    // Store in LocalStorage
-    const existingBookingsStr = localStorage.getItem('springs_bookings');
-    const existingBookings = existingBookingsStr ? JSON.parse(existingBookingsStr) : [];
-    const updatedBookings = [newBooking, ...existingBookings];
-    localStorage.setItem('springs_bookings', JSON.stringify(updatedBookings));
+    // ── Template params must match the variable names in your EmailJS template ──
+    const templateParams = {
+      booking_id:     newBooking.id,
+      from_name:      formData.name,
+      reply_to:       formData.email,
+      phone:          formData.phone,
+      address:        formData.address,
+      city:           formData.city,
+      preferred_date: formData.date || newBooking.date,
+      services:       selectedServices.join('\n• '),
+      estimated_cost: `$${estimatedCost}`,
+      notes:          formData.notes || 'No additional notes provided.',
+    };
 
-    setCreatedBooking(newBooking);
-    setIsSuccess(true);
-    onNewBookingAdded(); // trigger reload on App level
+    try {
+      // Send notification email via EmailJS
+      await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        EMAILJS_TEMPLATE_ID,
+        templateParams,
+        EMAILJS_PUBLIC_KEY
+      );
 
-    // Clear form
-    setFormData({
-      name: "",
-      email: "",
-      phone: "",
-      address: "",
-      city: "Colorado Springs",
-      date: "",
-      notes: ""
-    });
+      // Save to localStorage after confirmed send
+      const existing = localStorage.getItem('springs_bookings');
+      const existingBookings: Booking[] = existing ? JSON.parse(existing) : [];
+      localStorage.setItem(
+        'springs_bookings',
+        JSON.stringify([newBooking, ...existingBookings])
+      );
+
+      setCreatedBooking(newBooking);
+      setIsSuccess(true);
+      onNewBookingAdded();
+
+      // Reset form fields
+      setFormData({
+        name: '',
+        email: '',
+        phone: '',
+        address: '',
+        city: 'Colorado Springs',
+        date: '',
+        notes: '',
+      });
+    } catch (err) {
+      console.error('EmailJS send error:', err);
+      setSubmitError(
+        'Unable to send your request right now. Please call us directly or try again in a moment.'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <AnimatePresence>
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          
-          {/* Backdrop Blur */}
+
+          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -91,19 +148,21 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
             className="absolute inset-0 bg-black/80 backdrop-blur-md cursor-pointer"
           />
 
-          {/* Modal Container */}
+          {/* Modal */}
           <motion.div
             initial={{ scale: 0.95, opacity: 0, y: 15 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.95, opacity: 0, y: 15 }}
-            transition={{ type: "spring", damping: 25, stiffness: 350 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
             className="glass-panel-heavy rounded-3xl border border-white/10 max-w-lg w-full overflow-hidden shadow-2xl relative z-10 max-h-[90vh] flex flex-col text-white"
           >
             {/* Header */}
             <div className="p-6 border-b border-white/5 flex items-center justify-between bg-black/20 shrink-0">
               <div className="flex items-center gap-2">
                 <Calendar className="text-blue-400" size={18} />
-                <h3 className="font-bold text-lg font-display uppercase tracking-tight">Free Estimate Schedule</h3>
+                <h3 className="font-bold text-lg font-display uppercase tracking-tight">
+                  Free Estimate Schedule
+                </h3>
               </div>
               <button
                 id="btn-close-modal"
@@ -118,11 +177,13 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
             <div className="p-6 overflow-y-auto flex-1">
               {!isSuccess ? (
                 <form id="form-booking" onSubmit={handleSubmit} className="space-y-5">
-                  
-                  {/* General Info */}
+
+                  {/* Name + Email */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5Col">
-                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">Your Full Name</label>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">
+                        Your Full Name
+                      </label>
                       <input
                         type="text"
                         required
@@ -133,7 +194,9 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">Email Address</label>
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">
+                        Email Address
+                      </label>
                       <input
                         type="email"
                         required
@@ -145,9 +208,12 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
                     </div>
                   </div>
 
+                  {/* Phone + Date */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">Phone Number</label>
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">
+                        Phone Number
+                      </label>
                       <input
                         type="tel"
                         required
@@ -158,7 +224,9 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">Preferred Schedule Date</label>
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">
+                        Preferred Schedule Date
+                      </label>
                       <input
                         type="date"
                         required
@@ -170,10 +238,12 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
                     </div>
                   </div>
 
-                  {/* Address Details */}
+                  {/* Address + City */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="sm:col-span-2 space-y-1.5">
-                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">Street Address</label>
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">
+                        Street Address
+                      </label>
                       <input
                         type="text"
                         required
@@ -184,10 +254,12 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">Colorado City Zone</label>
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">
+                        Colorado City Zone
+                      </label>
                       <select
                         value={formData.city}
-                        onChange={(e) => setFormData({ ...formData, city: e.target.value as any })}
+                        onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                         className="w-full h-11 bg-zinc-900 border border-white/10 rounded-xl px-3 text-sm focus:outline-none focus:border-blue-500 text-white transition-colors"
                       >
                         <option value="Colorado Springs">Colorado Springs</option>
@@ -198,15 +270,20 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
                     </div>
                   </div>
 
-                  {/* Preloaded list of selected services */}
+                  {/* Services Summary */}
                   <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2.5">
                     <div className="flex items-center gap-1.5 text-zinc-400 mb-1">
                       <LayoutList size={13} />
-                      <span className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider">Scheduled Services Bucket</span>
+                      <span className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider">
+                        Scheduled Services Bucket
+                      </span>
                     </div>
                     <div className="space-y-1.5 max-h-24 overflow-y-auto pr-1">
                       {selectedServices.map((srvName, sIdx) => (
-                        <div key={sIdx} className="text-xs text-zinc-300 flex items-center justify-between border-b border-white/5 pb-1">
+                        <div
+                          key={sIdx}
+                          className="text-xs text-zinc-300 flex items-center justify-between border-b border-white/5 pb-1"
+                        >
                           <span>{srvName}</span>
                           <span className="text-[9px] text-blue-400 select-none">Active</span>
                         </div>
@@ -214,68 +291,99 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
                     </div>
                     <div className="pt-2 flex justify-between items-center text-xs">
                       <span className="text-zinc-500">Configured cost budget:</span>
-                      <strong className="text-emerald-400 font-mono font-bold font-display ml-2 flex items-center">
+                      <strong className="text-emerald-400 font-mono font-bold flex items-center">
                         <DollarSign size={12} />
                         {estimatedCost}
                       </strong>
                     </div>
                   </div>
 
-                  {/* Technical Notes */}
+                  {/* Notes */}
                   <div className="space-y-1.5">
                     <div className="flex justify-between items-center">
-                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">Property Conditions / Notes</label>
+                      <label className="text-[10px] text-zinc-400 font-mono uppercase tracking-wider block">
+                        Property Conditions / Notes
+                      </label>
                       <span className="text-[9px] text-zinc-500">Optional</span>
                     </div>
                     <textarea
                       rows={2}
                       value={formData.notes}
                       onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                      placeholder="E.g. dog in back yard, extreme pine needle accumulations found in back gutters, pine limb clearance under 15 feet needed"
-                      className="w-full bg-white/[0.02] border border-white/10 rounded-xl p-3 text-xs focus:outline-none focus:border-blue-500 text-white transition-colors placeholder:text-zinc-650"
+                      placeholder="E.g. dog in back yard, extreme pine needle accumulations, pine limb clearance under 15 feet needed"
+                      className="w-full bg-white/[0.02] border border-white/10 rounded-xl p-3 text-xs focus:outline-none focus:border-blue-500 text-white transition-colors placeholder:text-zinc-600 resize-none"
                     />
                   </div>
 
-                  {/* Submission Disclaimer */}
+                  {/* Disclaimer */}
                   <div className="text-[10px] text-zinc-500 font-sans leading-relaxed text-center italic">
-                    By submitting, you authorize Springs Exterior Home Services to visit your site property to evaluate trees/brush. We always call/notify first.
+                    By submitting, you authorize Springs Exterior Home Services to visit your site property to
+                    evaluate trees/brush. We always call/notify first.
                   </div>
 
-                  {/* Cost Summary submit */}
+                  {/* ── Error Banner ─────────────────────────────────────── */}
+                  {submitError && (
+                    <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-red-950/40 border border-red-500/20 text-red-400">
+                      <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                      <p className="text-xs font-sans leading-relaxed">{submitError}</p>
+                    </div>
+                  )}
+
+                  {/* Submit Buttons */}
                   <div className="pt-4 border-t border-white/5 flex gap-3">
                     <button
                       type="button"
                       onClick={onClose}
-                      className="flex-1 h-12 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold uppercase tracking-wider transition-all text-zinc-300 hover:text-white cursor-pointer"
+                      disabled={isSubmitting}
+                      className="flex-1 h-12 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold uppercase tracking-wider transition-all text-zinc-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="flex-1 h-12 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider shadow-[0_4px_16px_rgba(59,130,246,0.3)] transition-all cursor-pointer"
+                      disabled={isSubmitting}
+                      className="flex-1 h-12 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider shadow-[0_4px_20px_rgba(59,130,246,0.3)] transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
                     >
-                      Request Visit
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Sending Request…
+                        </>
+                      ) : (
+                        'Request Visit'
+                      )}
                     </button>
                   </div>
 
                 </form>
               ) : (
+                /* ── Success State ───────────────────────────────────────── */
                 <div className="text-center py-8 space-y-6">
-                  
-                  {/* Glowing success ring */}
                   <div className="flex justify-center relative">
                     <div className="absolute w-16 h-16 rounded-full bg-emerald-500/10 blur-xl pointer-events-none" />
-                    <CheckCircle2 size={54} className="text-emerald-400 relative z-10 animate-[bounce_1.5s_infinite]" />
+                    <motion.div
+                      initial={{ scale: 0.5, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ type: 'spring', damping: 12 }}
+                    >
+                      <CheckCircle2 size={54} className="text-emerald-400 relative z-10" />
+                    </motion.div>
                   </div>
 
                   <div className="space-y-2">
-                    <h4 className="text-2xl font-bold font-display text-white uppercase">Reservation Staged!</h4>
+                    <h4 className="text-2xl font-bold font-display text-white uppercase">
+                      Reservation Staged!
+                    </h4>
                     <p className="text-sm text-zinc-400 font-sans font-light max-w-md mx-auto">
-                      Thank you, <strong className="text-zinc-200">{createdBooking?.name}</strong>. Your estimate request for <strong className="text-zinc-200">{createdBooking?.city}</strong> has been saved directly to local database records.
+                      Thank you,{' '}
+                      <strong className="text-zinc-200">{createdBooking?.name}</strong>. Your
+                      estimate request for{' '}
+                      <strong className="text-zinc-200">{createdBooking?.city}</strong> has been
+                      received and emailed to our team.
                     </p>
                   </div>
 
-                  {/* Summary card */}
+                  {/* Booking Summary Card */}
                   <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 text-left text-xs space-y-2.5 max-w-sm mx-auto">
                     <div className="text-[10px] font-mono text-zinc-500 uppercase pb-1 border-b border-white/5 flex justify-between">
                       <span>Ref Code</span>
@@ -287,10 +395,12 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
                     </div>
                     <div className="flex justify-between">
                       <span className="text-zinc-400">Project Address:</span>
-                      <span className="text-zinc-300 truncate max-w-[200px]">{createdBooking?.address}, {createdBooking?.city}</span>
+                      <span className="text-zinc-300 truncate max-w-[200px]">
+                        {createdBooking?.address}, {createdBooking?.city}
+                      </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-zinc-400">Status Indicator:</span>
+                      <span className="text-zinc-400">Status:</span>
                       <span className="px-1.5 py-0.5 bg-yellow-950/40 text-yellow-400 font-bold uppercase rounded font-mono text-[9px] border border-yellow-500/10">
                         {createdBooking?.status}
                       </span>
@@ -302,7 +412,9 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
                   </div>
 
                   <p className="text-[11px] text-zinc-500 italic max-w-sm mx-auto">
-                    A technical representative will contact you at <strong className="text-zinc-400 font-normal">{createdBooking?.phone}</strong> within 12 hours. You can review and track your booking on our interactive dashboard.
+                    A representative will contact you at{' '}
+                    <strong className="text-zinc-400 font-normal">{createdBooking?.phone}</strong>{' '}
+                    within 12 hours. Track your booking in the dashboard below.
                   </p>
 
                   <button
@@ -312,11 +424,9 @@ export default function BookingFormModal({ isOpen, onClose, initialServices, ini
                   >
                     Close Drawer
                   </button>
-
                 </div>
               )}
             </div>
-
           </motion.div>
         </div>
       )}
